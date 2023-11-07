@@ -75,7 +75,7 @@ def get_url(endpoint, **kwargs):
     if endpoint not in ENDPOINTS:
         raise ValueError("Invalid endpoint {}".format(endpoint))
     else:
-        return get_base_url() + ENDPOINT S[endpoint].format(**kwargs)
+        return get_base_url() + ENDPOINTS[endpoint].format(**kwargs)
 
 
 def xform_datetime_field(record, field_name):
@@ -316,7 +316,7 @@ def sync_organic_installs():
 
     # This order matters
     fieldnames = (
-         "attributed_touch_type",
+        "attributed_touch_type",
         "attributed_touch_time",
         "install_time",
         "event_time",
