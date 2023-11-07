@@ -22,7 +22,7 @@ SESSION = requests.Session()
 
 CONFIG = {
     "app_id": None,
-    "api_token": None,
+    "api_token": None
 }
 
 
@@ -34,6 +34,16 @@ ENDPOINTS = {
     "organic_installs": "/export/{app_id}/organic_installs_report/v5",
     "in_app_events": "/export/{app_id}/in_app_events_report/v5"
 }
+
+
+def clean_config(config: dict) -> dict:
+    """Strips whitespace from any values in the config."""
+    for key in config.keys():
+        value = config[key]
+        if isinstance(value, str):
+            config[key] = value.strip()
+
+    return config
 
 
 def af_datetime_str_to_datetime(s):
@@ -58,14 +68,14 @@ def get_base_url():
     if "base_url" in CONFIG:
         return CONFIG["base_url"]
     else:
-        return "https://hq.appsflyer.com"
+        return "https://hq1.appsflyer.com"
 
 
 def get_url(endpoint, **kwargs):
     if endpoint not in ENDPOINTS:
         raise ValueError("Invalid endpoint {}".format(endpoint))
     else:
-        return get_base_url() + ENDPOINTS[endpoint].format(**kwargs)
+        return get_base_url() + ENDPOINT S[endpoint].format(**kwargs)
 
 
 def xform_datetime_field(record, field_name):
@@ -129,10 +139,15 @@ def parse_source_from_url(url):
                       giveup=giveup,
                       factor=2)
 @utils.ratelimit(10, 1)
-def request(url, params=None):
+def request(url, api_token, params=None):
 
     params = params or {}
     headers = {}
+
+    try:
+        headers["Authorization"] = "Bearer " + api_token
+    except Exception as e:
+        LOGGER.error("api token error: {error}".format(error=str(e)))
 
     if "user_agent" in CONFIG:
         headers["User-Agent"] = CONFIG["user_agent"]
@@ -266,10 +281,10 @@ def sync_installs():
     params = dict()
     params["from"] = from_datetime.strftime("%Y-%m-%d %H:%M")
     params["to"] = to_datetime.strftime("%Y-%m-%d %H:%M")
-    params["api_token"] = CONFIG["api_token"]
+    api_token = CONFIG["api_token"]
 
     url = get_url("installs", app_id=CONFIG["app_id"])
-    request_data = request(url, params)
+    request_data = request(url, api_token, params)
 
     csv_data = RequestToCsvAdapter(request_data)
     reader = csv.DictReader(csv_data, fieldnames)
@@ -292,7 +307,6 @@ def sync_installs():
     singer.write_state(STATE)
 
 def sync_organic_installs():
-    
     schema = load_schema("raw_data/organic_installs")
     singer.write_schema("organic_installs", schema, [
         "event_time",
@@ -302,7 +316,7 @@ def sync_organic_installs():
 
     # This order matters
     fieldnames = (
-        "attributed_touch_type",
+         "attributed_touch_type",
         "attributed_touch_time",
         "install_time",
         "event_time",
@@ -383,7 +397,7 @@ def sync_organic_installs():
         "user_agent",
         "http_referrer",
         "original_url",
-    )
+   )
 
     from_datetime = get_start("organic_installs")
     to_datetime = get_stop(from_datetime, datetime.datetime.now())
@@ -395,10 +409,10 @@ def sync_organic_installs():
     params = dict()
     params["from"] = from_datetime.strftime("%Y-%m-%d %H:%M")
     params["to"] = to_datetime.strftime("%Y-%m-%d %H:%M")
-    params["api_token"] = CONFIG["api_token"]
+    api_token = CONFIG["api_token"]
 
     url = get_url("organic_installs", app_id=CONFIG["app_id"])
-    request_data = request(url, params)
+    request_data = request(url, api_token, params)
 
     csv_data = RequestToCsvAdapter(request_data)
     reader = csv.DictReader(csv_data, fieldnames)
@@ -521,10 +535,10 @@ def sync_in_app_events():
         params = dict()
         params["from"] = from_datetime.strftime("%Y-%m-%d %H:%M")
         params["to"] = to_datetime.strftime("%Y-%m-%d %H:%M")
-        params["api_token"] = CONFIG["api_token"]
+        api_token = CONFIG["api_token"]
 
         url = get_url("in_app_events", app_id=CONFIG["app_id"])
-        request_data = request(url, params)
+        request_data = request(url, api_token, params)
 
         csv_data = RequestToCsvAdapter(request_data)
         reader = csv.DictReader(csv_data, fieldnames)
@@ -558,6 +572,9 @@ STREAMS = [
 def get_streams_to_sync(streams, state):
     target_stream = state.get("this_stream")
     result = streams
+    #if "organic_installs" in CONFIG:
+    #    if CONFIG["organic_installs"]:
+    #        result.append(Stream("organic_installs", sync_organic_installs))
     if target_stream:
         result = list(itertools.dropwhile(lambda x: x.name != target_stream, streams))
     if not result:
@@ -582,10 +599,11 @@ def main():
     args = utils.parse_args(
         [
             "app_id",
-            "api_token",
+            "api_token"
         ])
 
-    CONFIG.update(args.config)
+    config = clean_config(args.config)
+    CONFIG.update(config)
 
     if args.state:
         STATE.update(args.state)
