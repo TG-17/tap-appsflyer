@@ -29,6 +29,9 @@ CONFIG = {
 STATE = {}
 
 
+BOOKMARK_WINDOW_DAYS = 50
+
+
 ENDPOINTS = {
     "installs": "/export/{app_id}/installs_report/v5",
     "organic_installs": "/export/{app_id}/organic_installs_report/v5",
@@ -52,6 +55,14 @@ def get_start(key):
 
 def get_stop(start_datetime, stop_time, days=30):
     return min(start_datetime + datetime.timedelta(days=days), stop_time)
+
+
+def save_state(resource, bookmark):
+    window_start = datetime.datetime.now() - datetime.timedelta(days=BOOKMARK_WINDOW_DAYS)
+    if bookmark < window_start:
+        bookmark = bookmark + datetime.timedelta(days=1)
+    utils.update_state(STATE, resource, bookmark)
+    singer.write_state(STATE)
 
 
 def get_base_url():
@@ -288,8 +299,7 @@ def sync_installs():
             LOGGER.error("failed to get attributed_touch_time")
 
     # Write out state
-    utils.update_state(STATE, "installs", bookmark)
-    singer.write_state(STATE)
+    save_state("installs", bookmark)
 
 def sync_organic_installs():
     
@@ -414,8 +424,7 @@ def sync_organic_installs():
             bookmark = utils.strptime(record["event_time"])
 
     # Write out state
-    utils.update_state(STATE, "organic_installs", bookmark)
-    singer.write_state(STATE)
+    save_state("organic_installs", bookmark)
 
 
 def sync_in_app_events():
@@ -540,8 +549,7 @@ def sync_in_app_events():
                 bookmark = utils.strptime(record["event_time"])
 
         # Write out state
-        utils.update_state(STATE, "in_app_events", bookmark)
-        singer.write_state(STATE)
+        save_state("in_app_events", bookmark)
 
         # Move the timings forward
         from_datetime = to_datetime
