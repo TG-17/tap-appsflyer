@@ -65,6 +65,12 @@ def save_state(resource, bookmark):
     singer.write_state(STATE)
 
 
+def mark_received(stream, record_count):
+    if record_count > 0:
+        STATE.setdefault("last_received", {})[stream] = utils.strftime(datetime.datetime.now())
+        singer.write_state(STATE)
+
+
 def get_base_url():
     if "base_url" in CONFIG:
         return CONFIG["base_url"]
@@ -288,9 +294,11 @@ def sync_installs():
     next(reader) # Skip the heading row
 
     bookmark = from_datetime
+    record_count = 0
     for i, row in enumerate(reader):
         record = xform(row, schema)
         singer.write_record("installs", record)
+        record_count += 1
         # AppsFlyer returns records in order of most recent first.
         try:
             if utils.strptime(record["attributed_touch_time"]) > bookmark:
@@ -300,6 +308,7 @@ def sync_installs():
 
     # Write out state
     save_state("installs", bookmark)
+    mark_received("installs", record_count)
 
 def sync_organic_installs():
     
@@ -416,15 +425,18 @@ def sync_organic_installs():
     next(reader) # Skip the heading row
 
     bookmark = from_datetime
+    record_count = 0
     for i, row in enumerate(reader):
         record = xform(row, schema)
         singer.write_record("organic_installs", record)
+        record_count += 1
         # AppsFlyer returns records in order of most recent first.
         if utils.strptime(record["event_time"]) > bookmark:
             bookmark = utils.strptime(record["event_time"])
 
     # Write out state
     save_state("organic_installs", bookmark)
+    mark_received("organic_installs", record_count)
 
 
 def sync_in_app_events():
@@ -525,6 +537,7 @@ def sync_in_app_events():
     from_datetime = get_start("in_app_events")
     to_datetime = get_stop(from_datetime, stop_time, 10)
 
+    total_record_count = 0
     while from_datetime < stop_time:
         LOGGER.info("Syncing data from %s to %s", from_datetime, to_datetime)
         params = dict()
@@ -544,6 +557,7 @@ def sync_in_app_events():
         for i, row in enumerate(reader):
             record = xform(row, schema)
             singer.write_record("in_app_events", record)
+            total_record_count += 1
             # AppsFlyer returns records in order of most recent first.
             if utils.strptime(record["event_time"]) > bookmark:
                 bookmark = utils.strptime(record["event_time"])
@@ -554,6 +568,8 @@ def sync_in_app_events():
         # Move the timings forward
         from_datetime = to_datetime
         to_datetime = get_stop(from_datetime, stop_time, 10)
+
+    mark_received("in_app_events", total_record_count)
 
 
 STREAMS = [
@@ -573,6 +589,35 @@ def get_streams_to_sync(streams, state):
     return result
 
 
+def notify_slack(text):
+    webhook = CONFIG.get("slack_webhook_url")
+    if not webhook:
+        LOGGER.warning("No slack_webhook_url configured; skipping alert: %s", text)
+        return
+    try:
+        requests.post(webhook, json={"text": text}, timeout=10)
+    except requests.exceptions.RequestException as e:
+        LOGGER.error("Failed to post Slack alert: %s", e)
+
+
+def check_event_freshness():
+    threshold_days = CONFIG.get("staleness_threshold_days", 1)
+    threshold = datetime.timedelta(days=threshold_days)
+    now = datetime.datetime.now()
+    received = STATE.get("last_received", {})
+    stale = []
+    for name in ("installs", "organic_installs", "in_app_events"):
+        last = received.get(name)
+        if last is not None and (now - utils.strptime(last)) > threshold:
+            stale.append((name, last))
+    if stale:
+        lines = ["AppsFlyer app {}: no events received for over {} day(s):".format(
+            CONFIG.get("app_id"), threshold_days)]
+        for name, last in stale:
+            lines.append("- {}: last received {}".format(name, last))
+        notify_slack("\n".join(lines))
+
+
 def do_sync():
     LOGGER.info("do_sync()")
     streams = get_streams_to_sync(STREAMS, STATE)
@@ -583,6 +628,7 @@ def do_sync():
         stream.sync() # pylint: disable=not-callable
     STATE["this_stream"] = None
     singer.write_state(STATE)
+    check_event_freshness()
     LOGGER.info("Sync completed")
 
 
